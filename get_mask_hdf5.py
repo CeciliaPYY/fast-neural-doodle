@@ -27,11 +27,12 @@ mask_target = scipy.misc.imread(args.target_mask)
 # Save shapes
 style_shape = mask_style.shape
 target_shape = mask_target.shape
-if img_style.shape != style_shape:
-    raise Exception('Style image and mask have different sizes!')
-if args.target_image != None:
-    if img_content.shape != target_shape:
-        raise Exception('Content image and mask have different sizes!')
+# if img_style.shape != style_shape:
+#     print(img_style.shape, style_shape)
+#     raise Exception('Style image and mask have different sizes!')
+# if args.target_image != None:
+#     if img_content.shape != target_shape:
+#         raise Exception('Content image and mask have different sizes!')
 
 
 # Run K-Means to get rid of possible intermediate colors
@@ -47,6 +48,8 @@ labels_target = kmeans.predict(target_flatten.astype(float))
 style_kval = labels_style.reshape(style_shape[0], style_shape[1])
 target_kval = labels_target.reshape(target_shape[0], target_shape[1])
 
+print (style_kval.shape, style_kval.mean())
+print (target_kval.shape, target_kval.mean())
 # Dump
 f = h5py.File(args.out_hdf5, 'w')
 

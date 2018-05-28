@@ -26,10 +26,16 @@ cmd:option('-num_iterations', '1000',
            'Comma separated (no spaces) list with iteration number to do at corresponding resolution.')
 cmd:option('-resolutions', '0', 'Comma separated (no spaces) list or resolutions. 0 for original')
 
+cmd:option('-no_use_content_mask', false)
+cmd:option('-no_use_input_mix', false)
+
 -- Output options
 cmd:option('-print_iter', 50)
 cmd:option('-save_iter', 50)
 cmd:option('-output_image', 'out.png')
+cmd:option('-init_image', '4/start.png')
+
+cmd:option('-mask_pooling', 'avg', 'min|avg')
 
 -- Other options
 cmd:option('-style_scale', 1.0)
@@ -43,6 +49,8 @@ cmd:option('-seed', -1)
 cmd:option('-vgg_no_pad', false, 'Because of border effects padding is advised to be set to `valid`. This flag does it.')
 cmd:option('-content_layers', 'relu4_2', 'layers for content')
 cmd:option('-style_layers', 'relu1_1,relu2_1,relu3_1,relu4_1,relu5_1', 'layers for style')
+
+
 
 local function main()
   init = true
@@ -68,6 +76,7 @@ local function main()
     params.content_weight = 0
   end
 
+
   if params.gpu >= 0 then
     if params.backend ~= 'clnn' then
       style_img = style_img:cuda()
@@ -89,7 +98,7 @@ local function main()
   for k = 0, n_colors - 1 do
     local style_mask = f_data:read('style_mask_' .. k):all():float()
     local target_mask = f_data:read('target_mask_' .. k):all():float()
-    
+    -- print(k, target_mask:mean(), style_mask:mean())
     -- Scale
     if cur_resolution ~= 0 then 
       style_mask =  image.scale(style_mask,  cur_resolution, cur_resolution, 'simple')
@@ -149,36 +158,71 @@ local function main()
         end
 
         layer:floor()
-        for k, _ in ipairs(style_masks) do
-          style_masks[k] = image.scale(style_masks[k]  , math.floor(style_masks[k]:size(2)/2), math.floor(style_masks[k]:size(1)/2))
-          target_masks[k] = image.scale(target_masks[k] , math.floor(target_masks[k]:size(2)/2), math.floor(target_masks[k]:size(1)/2))
+
+        if params.mask_pooling == 'min' then
+          local sap = nn.SpatialMaxPooling(2,2,2,2,0,0):float()
+          print('pool')
+          for k, _ in ipairs (style_masks) do
+              
+              print(style_masks[k]:mean())
+              style_masks[k] = 1 - sap:forward(1 - style_masks[k]:add_dummy())[1]:clone()
+               print(style_masks[k]:mean())
+              target_masks[k] = 1 - sap:forward(1 - target_masks[k]:add_dummy())[1]:clone()
+              print('==')
+          end
+        elseif params.mask_pooling == 'avg' then
+          for k, _ in ipairs(style_masks) do
+            style_masks[k] = image.scale(style_masks[k]  , math.floor(style_masks[k]:size(2)/2), math.floor(style_masks[k]:size(1)/2))
+            target_masks[k] = image.scale(target_masks[k] , math.floor(target_masks[k]:size(2)/2), math.floor(target_masks[k]:size(1)/2))
+          end
         end
 
         style_masks = deepcopy(style_masks)
         target_masks = deepcopy(target_masks)
 
       elseif is_conv then
+        print('conv')
 
-        local sap = nn.SpatialAveragePooling(3,3,1,1,1,1):float()
-        for k, _ in ipairs (style_masks) do
-            style_masks[k] = sap:forward(style_masks[k]:add_dummy())[1]:clone()
-            target_masks[k] = sap:forward(target_masks[k]:add_dummy())[1]:clone()
-        end
+        -- local sap = nn.SpatialAveragePooling(3,3,1,1,1,1):float()
         
+        if params.mask_pooling == 'min' then
+          local sap = nn.SpatialMaxPooling(3,3,1,1,1,1):float()
+          for k, _ in ipairs (style_masks) do
+              print(style_masks[k]:mean())
+              style_masks[k] = 1 - sap:forward(1 - style_masks[k]:add_dummy())[1]:clone()
+              print(style_masks[k]:mean())
+              target_masks[k] = 1 - sap:forward(1 - target_masks[k]:add_dummy())[1]:clone()
+
+              print('==')
+          end
+        elseif params.mask_pooling == 'avg' then
+          local sap = nn.SpatialAveragePooling(3,3,1,1,1,1):float()
+          for k, _ in ipairs (style_masks) do
+              -- print(style_masks[k]:mean())
+              style_masks[k] = sap:forward(style_masks[k]:add_dummy())[1]:clone()
+              -- print(style_masks[k]:mean())
+              target_masks[k] =  sap:forward(target_masks[k]:add_dummy())[1]:clone()
+
+              print('==')
+          end
+        end
         -- Turn off padding
         if params.vgg_no_pad and (layer_type == 'nn.SpatialConvolution' or layer_type == 'cudnn.SpatialConvolution') then
           layer.padW = 0
           layer.padH = 0
-
+          print('pad')
           for k, _ in ipairs (style_masks) do
+            print(style_masks[k]:mean())
             style_masks[k] = image.crop(style_masks[k] , 'c', style_masks[k]:size(2)-2, style_masks[k]:size(1)-2) 
+            print(style_masks[k]:mean())
             target_masks[k] = image.crop(target_masks[k] , 'c', target_masks[k]:size(2)-2, target_masks[k]:size(1)-2) 
+            print('==')
           end
           style_masks = deepcopy(style_masks)
           target_masks = deepcopy(target_masks)
         end
       end
-
+      print('asssda', print(style_masks[1]:mean()))
       net:add(layer)
       
       -- Content
@@ -186,7 +230,14 @@ local function main()
         print("Setting up content layer", i, ":", layer.name)
         local target = net:forward(content_img):clone()
         local norm = params.normalize_gradients
-        local loss_module = nn.ContentLoss(params.content_weight, target, norm):float()
+
+        local sdfs = style_masks[1]:add_dummy():expandAs(target)
+        if params.no_use_content_mask then
+          sdfs = sdfs:clone():fill(1)
+        end
+        
+        local loss_module = nn.ContentLoss(params.content_weight, target, norm, sdfs):float()
+        
         if params.gpu >= 0 then
           if params.backend ~= 'clnn' then
             loss_module:cuda()
@@ -215,7 +266,9 @@ local function main()
         -- Compute target gram mats
         local target_grams = {}
         for k, _ in ipairs(style_masks) do
+          -- print(style_masks[k]:size(), target_features:size())
           local layer_mask = style_masks[k]:add_dummy():expandAs(target_features)
+          print(k, layer_mask:mean())--, layer_mask:size())
           if params.gpu >= 0 then
             if params.backend ~= 'clnn' then
               layer_mask = layer_mask:cuda()
@@ -262,14 +315,33 @@ local function main()
   end
   collectgarbage()
   
+  -- img1 = image.load(params.init_image, 3):float()
+  -- img1 = image.scale(img1, target_size[2], target_size[1], 'bilinear')
+  -- img1 = preprocess(img1):float()
+  
   -- Initialize with previous or with noise
   if img then 
     img = image.scale(img:float(), target_size[2], target_size[1])
+
+    img1 = image.load(params.init_image, 3):float()
+    img1 = image.scale(img1, target_size[2], target_size[1], 'bilinear')
+    img1 = preprocess(img1):float()
+
+    if params.no_use_input_mix then
+
+    else
+      img = img1*0.9 + img*0.1
+    end
   else
     if params.seed >= 0 then
       torch.manualSeed(params.seed)
     end
     img = torch.randn(3, target_size[1], target_size[2]):float():mul(0.001)
+    -- print(img:size())
+    img = image.load(params.init_image, 3):float()
+    img = image.scale(img, target_size[2], target_size[1], 'bilinear')
+    img = preprocess(img):float()
+    -- print(img:size())
   end
 
   if params.gpu >= 0 then
@@ -318,7 +390,7 @@ local function main()
       loss = loss + mod.loss
     end
     maybe_print(num_calls, loss, style_losses)
-    maybe_save(num_calls, img)
+    maybe_save(num_calls, img, cur_resolution)
 
     collectgarbage()
     -- optim.lbfgs expects a vector for gradients

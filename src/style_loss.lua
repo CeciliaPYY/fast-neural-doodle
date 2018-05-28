@@ -62,8 +62,11 @@ function StyleLoss:updateGradInput(input, gradOutput)
 
   -- Apply masks
   for k , _ in ipairs(self.target_masks_exp) do
-
+    -- print(k, self.target_masks_exp[k]:mean())
     -- Forward
+    if k > 1 then 
+      break
+    end
     local masked_input = torch.cmul(input,self.target_masks_exp[k])
     local G = self.gram:forward(masked_input)
 

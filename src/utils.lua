@@ -42,11 +42,11 @@ function deepcopy(orig)
     return copy
 end
 
-function build_filename(output_image, iteration)
+function build_filename(output_image, resolution, iteration)
   local ext = paths.extname(output_image)
   local basename = paths.basename(output_image, ext)
   local directory = paths.dirname(output_image)
-  return string.format('%s/%s_%d.%s',directory, basename, iteration, ext)
+  return string.format('%s/%s_%d_%d.%s',directory, basename, resolution, iteration, ext)
 end
 
 
@@ -84,13 +84,13 @@ function maybe_print(t, loss, style_losses)
     end
   end
 
-function maybe_save(t, img)
+function maybe_save(t, img, resolution)
   local should_save = params.save_iter > 0 and t % params.save_iter == 0
   should_save = should_save or t == cur_num_iterations
   if should_save then
     local disp = deprocess(img:double())
     disp = image.minmax{tensor=disp, min=0, max=1}
-    local filename = build_filename(params.output_image, t)
+    local filename = build_filename(params.output_image, resolution, t)
     if t == cur_num_iterations then
       filename = params.output_image
     end
