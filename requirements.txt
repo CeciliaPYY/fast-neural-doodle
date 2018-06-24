@@ -1,0 +1,5 @@
+python \
+numpy \
+scipy \
+h5py \
+sklearn
